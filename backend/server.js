@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import axios from 'axios'; // Axios import කරා
 import { GoogleGenAI, Type } from '@google/genai';
 
 dotenv.config();
@@ -9,55 +10,77 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Gemini SDK එක initialize කිරීම (2026 වර්තමාන SDK ශෛලියට අනුව)
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
-// යූසර්ගේ prompt එකෙන් ඩේටා වෙන් කරලා ගන්න endpoint එක
 app.post('/api/parse-prompt', async (req, res) => {
     try {
         const { prompt } = req.body;
-
         if (!prompt) {
             return res.status(400).json({ error: 'Prompt is required' });
         }
 
-        // Gemini එකෙන් බලාපොරොත්තු වන JSON ව්‍යුහය (Schema) අර්ථ දැක්වීම
+        // 1. Gemini Layer: Extract Entities
         const extractionSchema = {
             type: Type.OBJECT,
             properties: {
-                origin: { 
-                    type: Type.STRING, 
-                    description: "The starting location extracted from the prompt (e.g., 'Bodima')" 
-                },
-                destination: { 
-                    type: Type.STRING, 
-                    description: "The final destination location extracted from the prompt (e.g., 'Pettah')" 
-                },
-                search_query: { 
-                    type: Type.STRING, 
-                    description: "The specific shop, brand, or category the user wants to find along the route (e.g., 'P&S', 'pharmacy', 'food shop')" 
-                }
+                origin: { type: Type.STRING, description: "Starting location" },
+                destination: { type: Type.STRING, description: "Final destination" },
+                search_query: { type: Type.STRING, description: "Item or shop category to find" }
             },
             required: ["origin", "destination", "search_query"],
         };
 
-        // Gemini 2.5 Flash මොඩල් එක යූස් කරලා structured output එකක් ගැනීම
-        const response = await ai.models.generateContent({
+        const aiResponse = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
-            contents: `Analyze the following user travel intent (which might be in Singlish or Sinhala) and extract the origin, destination, and the item/place they want to search for along that route. User input: "${prompt}"`,
+            contents: `Analyze this user travel intent: "${prompt}"`,
             config: {
                 responseMimeType: "application/json",
                 responseSchema: extractionSchema,
-                systemInstruction: "You are a spatial-aware assistant. Your job is to parse local Sri Lankan travel contexts, processing Singlish/Sinhala phrases into clean search entities.",
+                systemInstruction: "Extract origin, destination, and search_query from the local Sri Lankan context.",
             }
         });
 
-        // ලැබුණු JSON string එක parse කරලා frontend එකට යැවීම
-        const structuredData = JSON.parse(response.text);
-        res.json({ success: true, data: structuredData });
+        const parsedData = JSON.parse(aiResponse.text);
+        const { origin, destination, search_query } = parsedData;
+
+        // 2. Maps Layer: Fetch Route from Google Directions API
+        const directionsUrl = `https://maps.googleapis.com/maps/api/directions/json`;
+        
+        const mapsResponse = await axios.get(directionsUrl, {
+            params: {
+                origin: origin,
+                destination: destination,
+                key: GOOGLE_MAPS_API_KEY
+            }
+        });
+
+        // Google Maps එකෙන් රීටර්න් කරන ඩේටා චෙක් කිරීම
+        if (mapsResponse.data.status !== 'OK') {
+            return res.status(400).json({ 
+                success: false, 
+                error: `Google Maps Error: ${mapsResponse.data.status}. Please try specific location names.` 
+            });
+        }
+
+        // මුළු රූට් එකේම හැරවුම් ලක්ෂ්‍ය නිරූපණය වන Encoded Polyline එකක් ලැබෙනවා
+        const routeGeometry = mapsResponse.data.routes[0].overview_polyline.points;
+        const duration = mapsResponse.data.routes[0].legs[0].duration.text;
+        const distance = mapsResponse.data.routes[0].legs[0].distance.text;
+
+        // 3. Final Response to Frontend
+        res.json({
+            success: true,
+            search_intent: { origin, destination, search_query },
+            route: {
+                distance: distance,
+                duration: duration,
+                polyline: routeGeometry // මේක තමයි පස්සේ frontend එකේ map එක උඩ අඳින්නේ
+            }
+        });
 
     } catch (error) {
-        console.error("Gemini Parsing Error:", error);
+        console.error("Error in Pipeline:", error);
         res.status(500).json({ success: false, error: "Internal Server Error" });
     }
 });
