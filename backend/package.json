@@ -6,7 +6,6 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js"
-    
   },
   "keywords": [],
   "author": "",
@@ -14,6 +13,7 @@
   "type": "module",
   "dependencies": {
     "@google/genai": "^2.4.0",
+    "axios": "^1.16.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1"
