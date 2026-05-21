@@ -135,23 +135,48 @@ app.post('/api/parse-prompt', async (req, res) => {
         // ==========================================
         // STEP 6: Core Spatial Query (ST_DWithin)
         // ==========================================
-        // පාරේ ඉඳන් මීටර් 1000ක් (1km) ඇතුළත තියෙන, රේටින්ග්ස් වැඩිම කඩවල් ඩේටාබේස් එකෙන් ෆිල්ටර් කිරීම
         const spatialSearchQuery = `
             SELECT name, rating, user_ratings_total, formatted_address,
                    ST_Distance(location, route_path) AS distance_from_route
             FROM cached_places, searched_routes
             WHERE searched_routes.id = $1
-              AND cached_places.category = $2 -- මෙන්න මේ ලයින් එක එකතු කරා!
+              AND cached_places.category = $2
               AND ST_DWithin(location, route_path, 2000) 
             ORDER BY rating DESC, distance_from_route ASC
             LIMIT 5;
         `;
         
-        // params වලට $2 සඳහා search_query එකත් පාස් කරනවා
         const finalPlacesResult = await pool.query(spatialSearchQuery, [savedRouteId, search_query]);
+        
+        // 💡 මෙන්න මේ ලයින් එක අනිවාර්යයෙන්ම තියෙන්න ඕනේ!
+        const dbPlaces = finalPlacesResult.rows; 
 
         // ==========================================
-        // STEP 7: Final Response Delivery
+        // STEP 7: Gemini Layer 2 - AI Reasoning & Recommendation
+        // ==========================================
+        let aiRecommendation = "පාර අවට ගැලපෙන ස්ථාන කිසිවක් හමු නොවීය.";
+        
+        if (dbPlaces.length > 0) {
+            const placesContext = dbPlaces.map((p, i) => 
+                `${i+1}. Name: ${p.name}, Rating: ${p.rating} (${p.user_ratings_total} reviews), Distance from route: ${Math.round(p.distance_from_route)} meters, Address: ${p.formatted_address}`
+            ).join('\n');
+
+            const reasoningResponse = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: `Based on the user's travel route from ${origin} to ${destination} and their query "${search_query}", analyze these discovered places and give a friendly, smart recommendation strictly in Sinhala or friendly local Singlish. Tell them which one is the best option based on high ratings and minimal distance from the route. Do not use markdown bold/stars inside the response text, just keep it plain paragraphs.
+                
+                Discovered Places:\n${placesContext}`,
+                config: {
+                    // සිංහලෙන් සහ සිංග්ලිෂ් වලින් විතරක් කතා කරන්න මෙතනින් බල කරමු
+                    systemInstruction: "You are a local Sri Lankan tour assistant. Guide the user based on the spatial data provided. You must talk strictly in Sinhala and friendly Sri Lankan Singlish, like a helpful peer explaining a route to a friend.",
+                }
+            });
+
+            aiRecommendation = reasoningResponse.text;
+        }
+
+        // ==========================================
+        // STEP 8: Final Response Delivery
         // ==========================================
         res.json({
             success: true,
@@ -161,12 +186,15 @@ app.post('/api/parse-prompt', async (req, res) => {
                 distance,
                 duration
             },
-            places_along_route: finalPlacesResult.rows
+            ai_analysis: aiRecommendation,
+            places_along_route: dbPlaces
         });
-
     } catch (error) {
-        console.error("Error in Spatial Pipeline:", error);
-        res.status(500).json({ success: false, error: "Internal Server Error" });
+        console.error('Error:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
     }
 });
 
