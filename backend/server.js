@@ -3,8 +3,12 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import axios from 'axios'; // Axios import කරා
 import { GoogleGenAI, Type } from '@google/genai';
+import pool from './db.js';
+import initDatabase from './initDb.js';
 
 dotenv.config();
+    
+await initDatabase(); // Initialize the database on startup
 
 const app = express();
 app.use(cors());
@@ -86,4 +90,8 @@ app.post('/api/parse-prompt', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`GeoPrompt-Navigator backend running on port ${PORT}`));
+app.listen(PORT, async () => {
+    console.log(`GeoPrompt-Navigator backend running on port ${PORT}`);
+    // සර්වර් එක ස්ටාර්ට් වෙද්දීම ඩේටාබේස් ටේබල්ස් ටික ඔටෝ හැදෙනවා
+    await initDatabase(); 
+});
