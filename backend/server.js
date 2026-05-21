@@ -137,7 +137,9 @@ app.post('/api/parse-prompt', async (req, res) => {
         // ==========================================
         const spatialSearchQuery = `
             SELECT name, rating, user_ratings_total, formatted_address,
-                   ST_Distance(location, route_path) AS distance_from_route
+                   ST_Distance(location, route_path) AS distance_from_route,
+                   ST_Y(location::geometry) AS lat, -- Geography එක geometry කරලා Latitude (Y) ගන්නවා
+                   ST_X(location::geometry) AS lng  -- Geography එක geometry කරලා Longitude (X) ගන්නවා
             FROM cached_places, searched_routes
             WHERE searched_routes.id = $1
               AND cached_places.category = $2
@@ -184,17 +186,24 @@ app.post('/api/parse-prompt', async (req, res) => {
                 origin,
                 destination,
                 distance,
-                duration
+                duration,
+                polyline: encodedPolyline
             },
             ai_analysis: aiRecommendation,
             places_along_route: dbPlaces
         });
     } catch (error) {
-        console.error('Error:', error);
-        res.status(500).json({ 
-            success: false, 
-            error: error.message 
-        });
+        console.error("Error in Spatial Pipeline:", error);
+        
+        // Gemini එකෙන් 503ක් ආවොත් ඒක ලස්සනට පෙන්වන්න
+        if (error.status === 503 || error.code === 503) {
+            return res.status(503).json({ 
+                success: false, 
+                error: "Gemini AI සර්වර් දැනට අධික කාර්යබහුලයි (503). කරුණාකර තත්පර කිහිපයකින් නැවත උත්සාහ කරන්න." 
+            });
+        }
+        
+        res.status(500).json({ success: false, error: "Internal Server Error" });
     }
 });
 
