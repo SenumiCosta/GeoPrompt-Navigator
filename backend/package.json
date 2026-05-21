@@ -13,6 +13,7 @@
   "type": "module",
   "dependencies": {
     "@google/genai": "^2.4.0",
+    "@mapbox/polyline": "^1.2.1",
     "axios": "^1.16.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
